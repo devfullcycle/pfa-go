@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: goserver
+spec:
+  replicas: 10
+  selector:
+    matchLabels:
+      app: goserver
+  template:
+    metadata:
+      labels:
+        app: goserver
+    spec:
+      containers:
+      - name: goserver
+        image: wesleywillians/pfa-go:latest
+        ports:
+        - containerPort: 8080

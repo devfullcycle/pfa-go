@@ -4,7 +4,9 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
+	"time"
 
 	"github.com/devfullcycle/pfa-go/internal/order/infra/database"
 	"github.com/devfullcycle/pfa-go/internal/order/usecase"
@@ -13,7 +15,7 @@ import (
 )
 
 func main() {
-	maxWorkers := 3
+	maxWorkers := 1
 	wg := sync.WaitGroup{}
 	db, err := sql.Open("mysql", "root:root@tcp(mysql:3306)/orders")
 	if err != nil {
@@ -22,6 +24,19 @@ func main() {
 	defer db.Close()
 	repository := database.NewOrderRepository(db)
 	uc := usecase.NewCalculateFinalPriceUseCase(repository)
+
+	http.HandleFunc("/total", func(w http.ResponseWriter, r *http.Request) {
+		uc := usecase.NewGetTotalUseCase(repository)
+		output, err := uc.Execute()
+		if err != nil {
+			// Internal Server Error
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(output)
+	})
+	go http.ListenAndServe(":8181", nil)
+
 	ch, err := rabbitmq.OpenChannel()
 	if err != nil {
 		panic(err)
@@ -29,24 +44,16 @@ func main() {
 	defer ch.Close()
 	out := make(chan amqp.Delivery)
 	go rabbitmq.Consume(ch, out)
-
-	wg.Add(maxWorkers)
 	for i := 0; i < maxWorkers; i++ {
-		defer wg.Done()
-		go worker(out, uc, i)
+		wg.Add(1)
+		i := i
+		go func() {
+			fmt.Println("Starting worker", i)
+			defer wg.Done()
+			worker(out, uc, i)
+		}()
 	}
 	wg.Wait()
-
-	// input := usecase.OrderInputDTO{
-	// 	ID:    "1234",
-	// 	Price: 100,
-	// 	Tax:   10,
-	// }
-	// output, err := uc.Execute(input)
-	// if err != nil {
-	// 	panic(err)
-	// }
-	// println(output.FinalPrice)
 }
 
 func worker(deliveryMessage <-chan amqp.Delivery, uc *usecase.CalculateFinalPriceUseCase, workerId int) {
@@ -63,5 +70,6 @@ func worker(deliveryMessage <-chan amqp.Delivery, uc *usecase.CalculateFinalPric
 		}
 		msg.Ack(false)
 		fmt.Println("Worker", workerId, "processed order", input.ID)
+		time.Sleep(1 * time.Second)
 	}
 }
